@@ -313,7 +313,7 @@
         <span class="icon"><i class="fa-solid fa-brain"></i></span>
         ML Prediction Tester
       </h1>
-      <p class="subtitle">Enter sensor values → get hybrid GRU + LightGBM predictions (HTTP only)</p>
+      <p class="subtitle">Enter sensor values → get hybrid GRU + LightGBM predictions in Wh (HTTP only)</p>
     </div>
 
     <!-- ═══════ INPUT CARD ═══════ -->
@@ -348,10 +348,8 @@
         </div>
         <div class="field">
           <label for="occupancy">Occupancy</label>
-          <select id="occupancy">
-            <option value="1" selected>1 — Occupied</option>
-            <option value="0">0 — Empty</option>
-          </select>
+          <input type="number" id="occupancy" value="1" step="1" min="0" />
+          <span class="unit">People / count</span>
         </div>
       </div>
 
@@ -359,9 +357,12 @@
         <button id="btnPredict" class="btn btn-primary" onclick="callPredict()">
           <i class="fa-solid fa-bolt"></i> Predict
         </button>
-        <button class="btn btn-secondary" onclick="callPredictNext()">
-          <i class="fa-solid fa-forward"></i> Auto Next (CSV)
+        <button id="btnNext" class="btn btn-secondary" onclick="callPredictNext()">
+          <i class="fa-solid fa-forward"></i> Auto Next (<span id="activeCsvLabel">CSV</span>)
         </button>
+        <span id="csvStatus" style="font-size:0.72rem;color:#64748b;font-weight:600;">
+          CSV: loading...
+        </span>
         <span id="reqCounter" style="font-size:0.72rem;color:#64748b;font-weight:600;margin-left:auto;">
           0 predictions
         </span>
@@ -404,6 +405,22 @@
     const API_BASE = window.location.origin;
     let reqCount = 0;
     let logStarted = false;
+    let energyUnit = 'Wh';
+
+    async function loadMetadata() {
+      try {
+        const resp = await fetch(API_BASE + '/metadata');
+        if (!resp.ok) return;
+        const meta = await resp.json();
+        energyUnit = meta.energy_unit || 'Wh';
+        const csvName = meta.csv_name || 'CSV';
+        document.getElementById('activeCsvLabel').textContent = csvName;
+        document.getElementById('csvStatus').textContent = `CSV: ${csvName}`;
+        document.getElementById('btnNext').title = `Auto Next reads rows from ${meta.csv_path || csvName}`;
+      } catch (err) {
+        document.getElementById('csvStatus').textContent = 'CSV: unavailable';
+      }
+    }
 
     function addLog(msg, cls) {
       const el = document.getElementById('logPanel');
@@ -419,6 +436,7 @@
       const el = document.getElementById('outputArea');
       const pred = data.predictions || {};
       const inp = data.live_sensors || {};
+      const unit = data.energy_unit || pred.energy_unit || energyUnit || 'Wh';
       let html = '';
 
       // Inputs echo
@@ -443,10 +461,10 @@
       </div><div class="output-grid">`;
 
       const items = [
-        ['Actual Energy', pred.actual_energy_kw, 'kWh', true],
-        ['Hybrid Final', pred.hybrid_final_kwh, 'kWh', true],
-        ['Upper Bound', pred.safety_upper_bound, 'kWh', true],
-        ['Lower Bound', pred.safety_lower_bound, 'kWh', false]
+        ['Actual Energy', pred.actual_energy_wh, unit, true],
+        ['Hybrid Final', pred.hybrid_final_wh, unit, true],
+        ['Upper Bound', pred.safety_upper_bound_wh, unit, true],
+        ['Lower Bound', pred.safety_lower_bound_wh, unit, false]
       ];
       for (const [label, value, unit, hl] of items) {
         if (value === undefined || value === null) continue;
@@ -470,8 +488,9 @@
         temperature_c: parseFloat(document.getElementById('temperature_c').value),
         humidity: parseFloat(document.getElementById('humidity').value),
         lux: parseFloat(document.getElementById('lux').value),
-        occupancy: parseInt(document.getElementById('occupancy').value)
+        occupancy: parseInt(document.getElementById('occupancy').value, 10)
       };
+      if (Number.isNaN(body.occupancy)) body.occupancy = 0;
       const dt = document.getElementById('datetime_input').value;
       if (dt) body.datetime_str = dt;
       return body;
@@ -495,7 +514,8 @@
         reqCount++;
         document.getElementById('reqCounter').textContent = reqCount + ' predictions';
         renderOutput(data);
-        addLog(`POST /predict → ${data.predictions?.hybrid_final_kwh?.toFixed(4) ?? '?'} kW (${ms}ms)`, 'ok');
+        const value = data.predictions?.hybrid_final_wh;
+        addLog(`POST /predict → ${value?.toFixed(4) ?? '?'} ${energyUnit} (${ms}ms)`, 'ok');
       } catch (err) {
         addLog('Error: ' + err.message, 'err');
       } finally {
@@ -523,11 +543,14 @@
         if (inp.occupancy !== undefined) document.getElementById('occupancy').value = inp.occupancy;
 
         renderOutput(data);
-        addLog(`GET /predict_next → ${data.predictions?.hybrid_final_kwh?.toFixed(4) ?? '?'} kW (${ms}ms)`, 'ok');
+        const value = data.predictions?.hybrid_final_wh;
+        addLog(`GET /predict_next → ${value?.toFixed(4) ?? '?'} ${energyUnit} (${ms}ms)`, 'ok');
       } catch (err) {
         addLog('Error: ' + err.message, 'err');
       }
     }
+
+    loadMetadata();
   </script>
 </body>
 
